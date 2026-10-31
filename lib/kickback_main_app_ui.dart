@@ -434,7 +434,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                     autocorrect: false,
                     enableSuggestions: false,
                     decoration: deco('Token',
-                        hint: 'from ~/.omni/hub_token on the hub phone',
+                        hint: 'Omni Node > Connect apps, or ~/.omni/hub_token',
                         suffix: IconButton(
                           icon: Icon(hideToken ? Icons.visibility : Icons.visibility_off),
                           onPressed: () => setSheet(() => hideToken = !hideToken),
@@ -487,7 +487,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                             return;
                           }
                           if (tok.isEmpty) {
-                            setSheet(() => error = 'Paste the token from the hub phone (cat ~/.omni/hub_token).');
+                            setSheet(() => error = 'Paste the token: Omni Node > Connect apps on this phone, or ~/.omni/hub_token on a hub PC.');
                             return;
                           }
                           if (ipcPort < 1 || ipcPort > 65535 || telPort < 1 || telPort > 65535) {
