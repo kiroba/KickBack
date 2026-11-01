@@ -455,6 +455,23 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                             decoration: deco('Health port'))),
                   ]),
                 ],
+                const Divider(height: 28, color: Colors.white12),
+                Row(children: [
+                  Expanded(
+                    child: Text(
+                      OmniOta.currentBuild == 0 ? 'App updates • dev build' : 'App updates • build ${OmniOta.currentBuild}',
+                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  ),
+                  TextButton.icon(
+                    icon: const Icon(Icons.system_update),
+                    label: const Text('Check for updates'),
+                    onPressed: () {
+                      Navigator.pop(sheetContext);
+                      OmniOta.checkAndPrompt(context);
+                    },
+                  ),
+                ]),
                 if (error != null) ...[
                   const SizedBox(height: 10),
                   Text(error!, style: const TextStyle(color: _red, fontSize: 12)),
