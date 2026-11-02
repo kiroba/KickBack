@@ -134,6 +134,10 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
   void initState() {
     super.initState();
     _init();
+    // Quiet update check on launch: only speaks up when a newer release exists.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) OmniOta.checkAndPrompt(context, silent: true);
+    });
   }
 
   @override
@@ -552,6 +556,11 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
         backgroundColor: const Color(0xFF1F1F1F),
         elevation: 2,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.system_update, color: _teal),
+            tooltip: 'Check for updates',
+            onPressed: () => OmniOta.checkAndPrompt(context),
+          ),
           IconButton(
             icon: const Icon(Icons.account_balance_wallet_outlined, color: _purple),
             tooltip: 'Wallet',
