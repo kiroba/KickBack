@@ -161,7 +161,8 @@ Future<void> showBugReportSheet(BuildContext context,
         }
       }
 
-      return Padding(
+      return SafeArea(
+        child: SingleChildScrollView(
         padding: EdgeInsets.only(
             left: 16, right: 16, top: 16,
             bottom: MediaQuery.of(ctx).viewInsets.bottom + 16),
@@ -206,7 +207,7 @@ Future<void> showBugReportSheet(BuildContext context,
             ),
           ],
         ),
-      );
+      ));
     },
   );
 }

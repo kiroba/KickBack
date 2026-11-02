@@ -96,17 +96,22 @@ class _OmniConsentGateState extends State<OmniConsentGate> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('${widget.appName} pre-alpha',
-                  style: const TextStyle(
-                      color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              const Text('Tester agreement',
-                  style: TextStyle(color: Color(0xFF03DAC6), fontSize: 14)),
-              const SizedBox(height: 16),
-              const Expanded(
+              Expanded(
                 child: SingleChildScrollView(
-                  child: Text(_terms,
-                      style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.4)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('${widget.appName} pre-alpha',
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 4),
+                      const Text('Tester agreement',
+                          style: TextStyle(color: Color(0xFF03DAC6), fontSize: 14)),
+                      const SizedBox(height: 16),
+                      const Text(_terms,
+                          style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.4)),
+                    ],
+                  ),
                 ),
               ),
               CheckboxListTile(
