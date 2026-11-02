@@ -226,7 +226,7 @@ class _KickBackLockGateState extends State<KickBackLockGate> with WidgetsBinding
         return Scaffold(
           backgroundColor: const Color(0xFF121212),
           body: Center(
-            child: Padding(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.all(32),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 const Icon(Icons.fingerprint, size: 72, color: Color(0xFFBB86FC)),

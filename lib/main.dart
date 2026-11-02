@@ -8,6 +8,7 @@ import 'kickback_app_lock.dart';
 import 'kickback_hub_settings.dart';
 import 'omni_bug_report.dart';
 import 'omni_consent_gate.dart';
+import 'omni_fit.dart';
 import 'kickback_platform.dart';
 import 'kickback_secure_identity.dart';
 
@@ -546,16 +547,25 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('The KickBack', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            const Text('The KickBack',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
             Text(
               _pending > 0 ? '${header.text} • $_pending waiting' : header.text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(color: header.color, fontSize: 11, fontWeight: FontWeight.w500),
             ),
           ],
         ),
         backgroundColor: const Color(0xFF1F1F1F),
         elevation: 2,
-        actions: [
+        actions: fitAppBarActions(context, [
+          IconButton(
+            icon: const Icon(Icons.system_update, color: _teal),
+            tooltip: 'Check for updates',
+            onPressed: () => OmniOta.checkAndPrompt(context),
+          ),
           IconButton(
             icon: const Icon(Icons.system_update, color: _teal),
             tooltip: 'Check for updates',
@@ -590,7 +600,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                   : null,
             ),
           ),
-        ],
+        ]),
       ),
       body: Column(
         children: [
@@ -602,7 +612,8 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                 Expanded(
                   child: TextField(
                     controller: _postController,
-                    maxLines: null,
+                    minLines: 1,
+                    maxLines: 5,
                     style: const TextStyle(color: Colors.white, fontSize: 14),
                     decoration: InputDecoration(
                       hintText: 'Share something…',
@@ -952,12 +963,14 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
   void _showWalletModal(BuildContext context) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: const Color(0xFF1E1E1E),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
-        return Padding(
+        return SafeArea(
+          child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1005,7 +1018,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
@@ -1035,12 +1048,14 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
         );
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: const Color(0xFF1E1E1E),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
-        return Padding(
+        return SafeArea(
+          child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1078,7 +1093,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
               const SizedBox(height: 8),
             ],
           ),
-        );
+        ));
       },
     );
   }
