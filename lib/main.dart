@@ -60,6 +60,8 @@ Future<void> main() async {
   await initKickBackPlatform();
   // Must be set before the identity is first loaded.
   StargateIdentity.seedStore = SecureStorageSeedStore();
+  // Updates: ask the Omni Node on this device first, with its token from Settings > Hub.
+  OmniOta.localTokenProvider = HubSettingsStore.localNodeToken;
   runApp(const KickBackApp());
 }
 
