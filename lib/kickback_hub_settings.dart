@@ -110,6 +110,16 @@ class HubSettingsStore {
     }
   }
 
+  /// For OmniOta (Omni-Core-UI 0.1.3 asks the Omni Node on this device for updates first):
+  /// the saved token, but only when Settings > Hub points at this device's own Omni Node
+  /// (Remote hub = 127.0.0.1, token from Omni Node > Connect apps). A remote hub's token is
+  /// never sent to 127.0.0.1. null = no Node token, so updates come from GitHub.
+  static Future<String?> localNodeToken() async {
+    final s = await load();
+    if (s.mode != HubMode.remote || s.token.isEmpty || !isLoopbackHost(s.host)) return null;
+    return s.token;
+  }
+
   static Future<void> save(HubSettings s) async {
     await _storage.write(key: _kMode, value: s.mode == HubMode.remote ? 'remote' : 'local');
     await _storage.write(key: _kHost, value: s.host);
@@ -117,4 +127,10 @@ class HubSettingsStore {
     await _storage.write(key: _kTel, value: '${s.telemetryPort}');
     await _storage.write(key: _kToken, value: s.token);
   }
+}
+
+/// True for this device's own address (where Omni Node listens).
+bool isLoopbackHost(String host) {
+  final h = host.trim().toLowerCase();
+  return h == '127.0.0.1' || h == 'localhost' || h == '::1';
 }
