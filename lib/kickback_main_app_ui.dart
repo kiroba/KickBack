@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:omni_core_ui/omni_core_ui.dart';
 
 import 'kickback_app_lock.dart';
+import 'identity_transfer.dart';
 import 'kickback_hub_settings.dart';
 import 'omni_bug_report.dart';
 import 'omni_consent_gate.dart';
@@ -381,6 +382,9 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
     final tel = TextEditingController(text: '${_hubSettings.telemetryPort}');
     var hideToken = true;
     String? error;
+    final transfer = TextEditingController();
+    String? transferMsg;
+    var transferOk = false;
     InputDecoration deco(String label, {String? hint, Widget? suffix}) => InputDecoration(
           labelText: label,
           hintText: hint,
@@ -459,6 +463,57 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                             keyboardType: TextInputType.number,
                             decoration: deco('Health port'))),
                   ]),
+                ],
+                const Divider(height: 28, color: Colors.white12),
+                const Text('Identity', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                const SizedBox(height: 4),
+                Text(
+                  _identity == null
+                      ? 'Your key on this app loads at startup.'
+                      : 'This app currently signs as ${_identity!.shortId}. Import the transfer code from LPE to sign as your Halo identity instead - it replaces the key this app created for itself (posts already made stay signed by that old key). Restart the app afterwards.',
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: transfer,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: deco('Identity transfer code', hint: 'From LPE > Copy identity transfer code'),
+                ),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton(
+                    onPressed: () async {
+                      final seed = seedFromIdentityTransferCode(transfer.text);
+                      if (seed == null) {
+                        setSheet(() {
+                          transferOk = false;
+                          transferMsg = 'That code does not check out - copy it again from LPE, complete and unchanged.';
+                        });
+                        return;
+                      }
+                      try {
+                        await SecureStorageSeedStore().write(seed);
+                        if (sheetContext.mounted) {
+                          setSheet(() {
+                            transferOk = true;
+                            transferMsg = 'Identity saved. Restart KickBack to sign as your Halo identity.';
+                          });
+                        }
+                      } catch (_) {
+                        setSheet(() {
+                          transferOk = false;
+                          transferMsg = 'The code is valid but saving it failed on this device.';
+                        });
+                      }
+                    },
+                    child: const Text('Import identity'),
+                  ),
+                ),
+                if (transferMsg != null) ...[
+                  const SizedBox(height: 8),
+                  Text(transferMsg!, style: TextStyle(color: transferOk ? Colors.greenAccent : _red, fontSize: 12)),
                 ],
                 const Divider(height: 28, color: Colors.white12),
                 Row(children: [
