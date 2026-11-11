@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:omni_core_ui/omni_core_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'kickback_app_lock.dart';
+import 'mastodon_share.dart';
 import 'kickback_hub_settings.dart';
 import 'omni_bug_report.dart';
 import 'omni_consent_gate.dart';
@@ -277,7 +279,12 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
       await _loadFeed();
       final sent = _posts.any((p) => p.eventId == ev.eventId && p.synced);
       if (sent) {
-        _snack('Signed, saved on this device and sent to ${_hub.isRemote ? 'the remote hub' : 'the local daemon'}.', _teal);
+        _snackWithAction(
+          'Signed, saved on this device and sent to ${_hub.isRemote ? 'the remote hub' : 'the local daemon'}.',
+          _teal,
+          'Share to Mastodon',
+          () => _shareToMastodon(text),
+        );
       } else if (!sync.hubReachable) {
         _snack(
             _hub.isRemote
@@ -301,6 +308,36 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
       backgroundColor: color,
       duration: const Duration(seconds: 3),
     ));
+  }
+
+  void _snackWithAction(String msg, Color color, String label, VoidCallback onPressed) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg, style: const TextStyle(color: Colors.black)),
+      backgroundColor: color,
+      duration: const Duration(seconds: 6),
+      action: SnackBarAction(label: label, textColor: Colors.black, onPressed: onPressed),
+    ));
+  }
+
+  /// First link out of the Omniverse: share a post to Mastodon via the web
+  /// share intent. No API key or account in the app — the browser opens
+  /// Mastodon's composer with the post text plus a link back to the tester
+  /// page, and the user posts from their own Mastodon account.
+  Future<void> _shareToMastodon(String text) async {
+    final uri = buildMastodonShareUrl(text);
+    bool opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      opened = false;
+    }
+    if (!mounted) return;
+    if (opened) {
+      _snack('Opening Mastodon — post it from your account to share it beyond the Omniverse.', _teal);
+    } else {
+      _snack('Could not open the browser for Mastodon.', _red);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -943,6 +980,13 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(status.text, style: TextStyle(fontSize: 11, color: status.color)),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.share_outlined, size: 16, color: Colors.grey),
+                  tooltip: 'Share to Mastodon',
+                  constraints: const BoxConstraints(),
+                  padding: const EdgeInsets.only(right: 8),
+                  onPressed: () => _shareToMastodon(text),
                 ),
                 InkWell(
                   onTap: () {
