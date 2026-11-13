@@ -7,6 +7,8 @@ import 'package:omni_core_ui/omni_core_ui.dart';
 import 'kickback_app_lock.dart';
 import 'identity_transfer.dart';
 import 'kickback_hub_settings.dart';
+import 'mastodon_import.dart';
+import 'mastodon_link_store.dart';
 import 'omni_bug_report.dart';
 import 'omni_consent_gate.dart';
 import 'omni_fit.dart';
@@ -293,6 +295,36 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
     }
   }
 
+  /// Signs and stores posts imported from another platform, then pushes
+  /// them to the hub like any other post. Returns an error string, or null
+  /// on success. Importing signs with the identity key, so a recent unlock
+  /// is required first - the same rule as publishing.
+  Future<String?> _importExternalPosts(
+      List<Map<String, dynamic>> payloads) async {
+    final auth = await AppLock.ensureRecentUnlock(
+        'Confirm it\'s you to import these posts');
+    if (!auth.ok) return auth.message ?? 'Import not signed: not unlocked';
+    try {
+      for (final p in payloads) {
+        await _store.append(kPostAction, p);
+      }
+      final sync = await _store.syncToHubDetailed(_hub);
+      if (mounted) {
+        setState(() => _lastSync = sync);
+        await _loadFeed();
+      }
+      return null;
+    } catch (e) {
+      return 'Could not save the imported posts: $e';
+    }
+  }
+
+  /// Payloads of the posts already in the local log, for import dedupe.
+  Future<List<Map<String, dynamic>>> _existingPostPayloads() async {
+    final posts = await _store.recent(limit: 500, action: kPostAction);
+    return posts.map((p) => p.payload).toList();
+  }
+
   void _snack(String msg, Color color) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -521,6 +553,12 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                   const SizedBox(height: 8),
                   Text(transferMsg!, style: TextStyle(color: transferOk ? Colors.greenAccent : _red, fontSize: 12)),
                 ],
+                const Divider(height: 28, color: Colors.white12),
+                _MastodonImportSection(
+                  verifyCode: _identity == null ? null : mastodonVerifyCode(_identity!.pubkeyHex),
+                  existingPayloads: _existingPostPayloads,
+                  onImport: _importExternalPosts,
+                ),
                 const Divider(height: 28, color: Colors.white12),
                 Row(children: [
                   Expanded(
@@ -943,6 +981,19 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
     return '${t.year}-${two(t.month)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)}';
   }
 
+  /// The provenance line for an imported post, read from the signed
+  /// payload: where it was first posted, by which account, and when.
+  String _importedFromLabel(Map<dynamic, dynamic> src) {
+    final platform = '${src['platform'] ?? 'elsewhere'}';
+    final account = '${src['account'] ?? ''}';
+    final when = DateTime.tryParse('${src['posted_at'] ?? ''}')?.toLocal();
+    return [
+      platform == 'mastodon' ? 'via Mastodon' : 'via $platform',
+      if (account.isNotEmpty) account,
+      if (when != null) _formatTime(when),
+    ].join(' · ');
+  }
+
   Widget _buildEventCard(OmniEvent e) {
     final mine = _identity != null && e.authorPubkey == _identity!.pubkeyHex;
     final author = mine
@@ -995,6 +1046,13 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
             ),
             const SizedBox(height: 10),
             Text(text, style: const TextStyle(fontSize: 14, color: Colors.white, height: 1.3)),
+            if (e.payload['imported_from'] is Map) ...[
+              const SizedBox(height: 6),
+              Text(
+                _importedFromLabel(e.payload['imported_from'] as Map),
+                style: const TextStyle(fontSize: 11, color: Colors.grey),
+              ),
+            ],
             const SizedBox(height: 10),
             Row(
               children: [
@@ -1156,6 +1214,254 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
           ),
         ));
       },
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Mastodon import section (Settings > Hub): link the account by its public
+// verify code, then pull its recent public posts into the local log. The
+// section owns the Mastodon side; appending and syncing the signed events
+// stays with the screen state (onImport), which applies the AppLock rule.
+// -----------------------------------------------------------------------------
+class _MastodonImportSection extends StatefulWidget {
+  /// This identity's public verify code, or null while the identity loads.
+  final String? verifyCode;
+
+  /// Payloads of the posts already in the local log, for dedupe.
+  final Future<List<Map<String, dynamic>>> Function() existingPayloads;
+
+  /// Signs, stores and syncs the imported payloads; returns an error
+  /// string, or null on success.
+  final Future<String?> Function(List<Map<String, dynamic>> payloads)
+      onImport;
+
+  const _MastodonImportSection({
+    required this.verifyCode,
+    required this.existingPayloads,
+    required this.onImport,
+  });
+
+  @override
+  State<_MastodonImportSection> createState() =>
+      _MastodonImportSectionState();
+}
+
+class _MastodonImportSectionState extends State<_MastodonImportSection> {
+  static const Color _red = Color(0xFFFF5370);
+
+  final TextEditingController _acct = TextEditingController();
+  final MastodonClient _client = MastodonClient();
+  MastodonLink? _link;
+  bool _loading = true;
+  bool _busy = false;
+  String? _msg;
+  bool _msgOk = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _acct.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final link = await MastodonLinkStore.load();
+    if (!mounted) return;
+    setState(() {
+      _link = link;
+      if (link != null) _acct.text = link.acct.full;
+      _loading = false;
+    });
+  }
+
+  void _say(String msg, bool ok) {
+    if (!mounted) return;
+    setState(() {
+      _msg = msg;
+      _msgOk = ok;
+    });
+  }
+
+  Future<void> _verify() async {
+    final code = widget.verifyCode;
+    if (code == null) {
+      _say('Your key on this app loads at startup - reopen Settings once it has.', false);
+      return;
+    }
+    final acct = parseMastodonAcct(_acct.text);
+    if (acct == null) {
+      _say('That does not look like a Mastodon address - use @you@mastodon.social (or your own instance).', false);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final account = await _client.lookupAccount(acct);
+      if (!mastodonAccountClaimsCode(account, code)) {
+        _say('The code is not in that account\'s bio or profile fields yet. Add it on Mastodon, save, then verify again.', false);
+        return;
+      }
+      final link = MastodonLink(acct, account['id'] as String);
+      await MastodonLinkStore.save(link);
+      if (mounted) setState(() => _link = link);
+      _say('Linked ${acct.full}. Its public posts can now be imported.', true);
+    } on MastodonImportException catch (e) {
+      _say(e.message, false);
+    } catch (_) {
+      _say('Something went wrong checking that account. Try again.', false);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _import() async {
+    final link = _link;
+    if (link == null) return;
+    setState(() => _busy = true);
+    try {
+      final statuses =
+          await _client.recentStatuses(link.acct, link.accountId);
+      final already =
+          importedMastodonStatusIds(await widget.existingPayloads());
+      // The API answers newest first; appending oldest first keeps the
+      // imported run in its original order in the log and the feed.
+      final fresh = statuses
+          .where((s) => !already.contains(s.id))
+          .toList()
+          .reversed
+          .toList();
+      if (fresh.isEmpty) {
+        _say('Nothing new: the recent public posts from ${link.acct.full} are already in KickBack.', true);
+        return;
+      }
+      final payloads =
+          fresh.map((s) => mastodonImportPayload(s, link.acct)).toList();
+      final err = await widget.onImport(payloads);
+      if (err != null) {
+        _say(err, false);
+        return;
+      }
+      _say('Imported ${payloads.length} post${payloads.length == 1 ? '' : 's'} from ${link.acct.full} - signed by your key here and marked as Mastodon imports.', true);
+    } on MastodonImportException catch (e) {
+      _say(e.message, false);
+    } catch (_) {
+      _say('Something went wrong during the import. Try again.', false);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _unlink() async {
+    await MastodonLinkStore.clear();
+    if (!mounted) return;
+    setState(() {
+      _link = null;
+      _msg = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    InputDecoration deco(String label, {String? hint}) => InputDecoration(
+          labelText: label,
+          hintText: hint,
+          filled: true,
+          fillColor: const Color(0xFF2C2C2C),
+          border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none),
+        );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Mastodon',
+            style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.white)),
+        const SizedBox(height: 4),
+        const Text(
+          'Bring your public Mastodon posts into KickBack. They land in your log signed by your key here, marked with where they came from. Only posts - no boosts, no replies.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        if (_loading)
+          const Text('Loading…',
+              style: TextStyle(color: Colors.grey, fontSize: 12))
+        else if (_link == null) ...[
+          TextField(
+            controller: _acct,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration:
+                deco('Mastodon account', hint: '@you@mastodon.social'),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Prove it is yours: put this code in your Mastodon bio (Profile > Appearance) or a profile field, save, then tap Verify. The code is public - it links the accounts, it is not a password.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: SelectableText(
+                  widget.verifyCode ?? '…',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontFamily: 'monospace'),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.copy, size: 18),
+                onPressed: widget.verifyCode == null
+                    ? null
+                    : () => Clipboard.setData(
+                        ClipboardData(text: widget.verifyCode!)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton(
+              onPressed: _busy ? null : _verify,
+              child: Text(_busy ? 'Checking…' : 'Verify and link'),
+            ),
+          ),
+        ] else ...[
+          Text(
+            'Linked: ${_link!.acct.full}',
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              OutlinedButton(
+                onPressed: _busy ? null : _import,
+                child: Text(_busy ? 'Working…' : 'Import recent posts'),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: _busy ? null : _unlink,
+                child: const Text('Unlink'),
+              ),
+            ],
+          ),
+        ],
+        if (_msg != null) ...[
+          const SizedBox(height: 8),
+          Text(_msg!,
+              style: TextStyle(
+                  color: _msgOk ? Colors.greenAccent : _red, fontSize: 12)),
+        ],
+      ],
     );
   }
 }
