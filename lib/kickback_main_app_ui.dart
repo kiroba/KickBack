@@ -494,11 +494,17 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                         return;
                       }
                       try {
+                        // Derive before saving so the success message can name
+                        // the identity this code carries - the same shortId
+                        // LPE shows for it - and the import can be checked
+                        // against the right key before restarting.
+                        final imported = await StargateIdentity.fromSeed(seed);
                         await SecureStorageSeedStore().write(seed);
                         if (sheetContext.mounted) {
                           setSheet(() {
                             transferOk = true;
-                            transferMsg = 'Identity saved. Restart KickBack to sign as your Halo identity.';
+                            transferMsg =
+                                'Identity saved: ${imported.shortId} - the same identity LPE shows. Restart KickBack to sign as your Halo identity.';
                           });
                         }
                       } catch (_) {
