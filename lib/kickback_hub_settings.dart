@@ -9,8 +9,8 @@ import 'kickback_platform.dart';
 /// - "This phone" (default): the daemon runs in Termux on this phone,
 ///   127.0.0.1 :5000 / :9100, no token. Same as every earlier build.
 /// - "Remote hub": another phone runs the daemon (v8.7.0+, started with
-///   OMNI_HUB_REMOTE=1) and this phone reaches it, usually over Tailscale
-///   (its 100.x address). Every call sends "Authorization: Bearer <token>".
+///   OMNI_HUB_REMOTE=1) and this phone reaches it over the network
+///   (its address on that network). Every call sends "Authorization: Bearer <token>".
 ///   Posts are still signed with this phone's own key.
 ///
 /// Stored in flutter_secure_storage (Android Keystore-encrypted), the token

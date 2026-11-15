@@ -44,8 +44,8 @@ import 'kickback_secure_identity.dart';
 ///   the app keeps showing this device's own posts and says why.
 ///
 /// - Hub setting (Settings icon > Hub): "This phone" (default, 127.0.0.1) or
-///   "Remote hub": another phone's daemon (v8.7.0+, OMNI_HUB_REMOTE=1), e.g.
-///   over Tailscale, with a bearer token. Same feed and submit calls; posts are
+///   "Remote hub": another device's daemon (v8.7.0+, OMNI_HUB_REMOTE=1), e.g.
+///   over the network, with a bearer token. Same feed and submit calls; posts are
 ///   still signed with this phone's key and the remote hub keeps that
 ///   signature. The header says connected / unauthorized / unreachable.
 ///   Stored in flutter_secure_storage (kickback_hub_settings.dart).
@@ -437,7 +437,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
       case HubConnectionState.unreachable:
         _snack(
             next.isRemote
-                ? 'Remote hub unreachable. Is Tailscale on for both phones and the daemon running?'
+                ? 'Remote hub unreachable. Is the daemon running on the hub device, and can this phone reach it?'
                 : 'No daemon on this phone right now. Posts stay on this device.',
             _amber);
       default:
@@ -496,7 +496,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                   groupValue: mode,
                   onChanged: (v) => setSheet(() => mode = v ?? HubMode.remote),
                   title: const Text('Remote hub'),
-                  subtitle: const Text('Another phone runs the daemon (e.g. over Tailscale)'),
+                  subtitle: const Text('Another device runs the daemon (e.g. your PC at home)'),
                   contentPadding: EdgeInsets.zero,
                 ),
                 if (mode == HubMode.remote) ...[
@@ -505,7 +505,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                     controller: addr,
                     keyboardType: TextInputType.url,
                     autocorrect: false,
-                    decoration: deco('Address', hint: '100.x.y.z (Tailscale IP) or host name'),
+                    decoration: deco('Address', hint: 'IP address or host name'),
                   ),
                   const SizedBox(height: 10),
                   TextField(
@@ -643,7 +643,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                           final telPort = int.tryParse(tel.text.trim()) ?? HubSettings.defaultTelemetryPort;
                           final tok = token.text.trim();
                           if (parsed.host == null) {
-                            setSheet(() => error = 'Enter the hub phone\'s address, e.g. its Tailscale 100.x IP.');
+                            setSheet(() => error = 'Enter the hub device\'s address, e.g. 192.168.1.42.');
                             return;
                           }
                           if (tok.isEmpty) {
