@@ -2,6 +2,15 @@
 
 The KickBack social network for The Omniverse. Split out of [kiroba/The-Omniverse](https://github.com/kiroba/The-Omniverse) with its git history (Oct 30 2026).
 
+## Status (Nov 16, 2026)
+
+- **Identity transfer import — live.** Carry your @handle Halo identity in from LPE with a transfer code and sign as that identity (PR #9; the import lives in the live settings sheet since PR #14, Nov 14, 2026).
+- **Mastodon import — live.** Bring your own public Mastodon posts back into KickBack (PR #13, Nov 13, 2026), and share a post outward to Mastodon via web intent (PR #10).
+
+## In the works (Nov 30, 2026 cycle — not shipped)
+
+Remove the top-bar update button, image uploads, video (short clips first-class; long video later via asset streaming), adding people from the feed and the profiles tab, and a community layer built for the mesh — relay circles, where membership is a mutual add and your node carries for the group.
+
 ## Build
 ```
 flutter pub get
