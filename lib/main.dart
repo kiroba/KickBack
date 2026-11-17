@@ -1047,6 +1047,11 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                 const Icon(Icons.hub_outlined, size: 13, color: Colors.grey),
                 const SizedBox(width: 4),
                 Expanded(child: Text(origin, style: const TextStyle(fontSize: 11, color: Colors.grey))),
+                if (!mine)
+                  TextButton(
+                    onPressed: () => _sendFriendEvent(e.displayAuthor, 'pending'),
+                    child: const Text('Add friend', style: TextStyle(fontSize: 11)),
+                  ),
                 InkWell(
                   onTap: () {
                     Clipboard.setData(ClipboardData(text: e.dedupeKey));
@@ -1209,11 +1214,6 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                 Expanded(
                   child: Text(status.text, style: TextStyle(fontSize: 11, color: status.color)),
                 ),
-                if (!mine)
-                  TextButton(
-                    onPressed: () => _sendFriendEvent(e.displayAuthor, 'pending'),
-                    child: const Text('Add friend', style: TextStyle(fontSize: 11)),
-                  ),
                 IconButton(
                   icon: const Icon(Icons.share_outlined, size: 16, color: Colors.grey),
                   tooltip: 'Share to Mastodon',
