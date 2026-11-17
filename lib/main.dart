@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,6 +17,7 @@ import 'omni_consent_gate.dart';
 import 'omni_fit.dart';
 import 'kickback_platform.dart';
 import 'kickback_secure_identity.dart';
+import 'kickback_media.dart';
 
 /// ============================================================================
 /// THE KICKBACK SOCIAL NETWORK UI
@@ -58,6 +60,7 @@ import 'kickback_secure_identity.dart';
 /// ============================================================================
 
 const String kPostAction = 'KICKBACK_POST';
+const String kFriendAction = 'KICKBACK_FRIEND';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -129,6 +132,9 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
   bool _loading = true;
   String? _loadError;
   bool _isPublishing = false;
+  KickBackAsset? _selectedImage;
+  List<OmniEvent> _friendEvents = [];
+  List<dynamic> _hubFriendEvents = [];
 
   StargateIdentity? _identity;
   HubStatus? _hubStatus; // null = not checked yet
@@ -172,6 +178,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
 
   Future<void> _loadFeed() async {
     final posts = await _store.recent(limit: 200, action: kPostAction);
+    final friends = await _store.recent(limit: 200, action: kFriendAction);
     final pending = await _store.pendingCount();
     for (final p in posts) {
       if (!_sigOk.containsKey(p.eventId)) {
@@ -181,6 +188,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
     if (!mounted) return;
     setState(() {
       _posts = posts;
+      _friendEvents = friends;
       _pending = pending;
     });
   }
@@ -205,6 +213,8 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
       _feedState = r.state;
       _feedError = r.error;
     });
+    final friendFeed = await _hub.eventsFeed(limit: 200, type: kFriendAction);
+    if (friendFeed.state == HubFeedState.ok) _hubFriendEvents = friendFeed.events;
   }
 
   Future<void> _refreshAll() async {
@@ -252,9 +262,20 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
     }
   }
 
+  Future<void> _pickPostImage() async {
+    try {
+      final image = await KickBackMedia.pickImage();
+      if (!mounted || image == null) return;
+      await KickBackMedia.saveLocal(image);
+      setState(() => _selectedImage = image);
+    } catch (e) {
+      _snack('$e', _red);
+    }
+  }
+
   Future<void> _publishLocalPost() async {
     final text = _postController.text.trim();
-    if (text.isEmpty || _isPublishing) return;
+    if ((text.isEmpty && _selectedImage == null) || _isPublishing) return;
 
     // Signing uses the identity key, so require a recent unlock first.
     final auth = await AppLock.ensureRecentUnlock('Confirm it\'s you to sign this post');
@@ -265,8 +286,19 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
 
     setState(() => _isPublishing = true);
     try {
-      final ev = await _store.append(kPostAction, {'text': text, 'app': 'kickback'});
+      final image = _selectedImage;
+      if (image != null) await KickBackMedia.upload(_hubSettings, image);
+      final ev = await _store.append(kPostAction, {
+        'text': text,
+        'app': 'kickback',
+        if (image != null) ...{
+          'image_sha256': image.sha256,
+          'image_mime': image.mimeType,
+          'image_bytes': image.bytes.length,
+        },
+      });
       _postController.clear();
+      if (mounted) setState(() => _selectedImage = null);
       await _loadFeed();
 
       final sync = await _store.syncToHubDetailed(_hub);
@@ -301,6 +333,28 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
       _snack('Could not save the post: $e', _red);
     } finally {
       if (mounted) setState(() => _isPublishing = false);
+    }
+  }
+
+  Future<void> _sendFriendEvent(String target, String state) async {
+    if (_identity == null || target == _identity!.pubkeyHex) return;
+    final auth = await AppLock.ensureRecentUnlock('Confirm it\'s you to update your friends');
+    if (!auth.ok) {
+      _snack(auth.message ?? 'Friend update not signed: not unlocked', _red);
+      return;
+    }
+    try {
+      await _store.append(kFriendAction, {
+        'schema': 1,
+        'target_pubkey': target,
+        'state': state,
+        'app': 'kickback',
+      });
+      await _loadFeed();
+      await _store.syncToHubDetailed(_hub);
+      _snack(state == 'accepted' ? 'Friend request accepted.' : 'Friend request sent.', _teal);
+    } catch (e) {
+      _snack('Could not update friends: $e', _red);
     }
   }
 
@@ -705,14 +759,14 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
             onPressed: () => OmniOta.checkAndPrompt(context),
           ),
           IconButton(
-            icon: const Icon(Icons.system_update, color: _teal),
-            tooltip: 'Check for updates',
-            onPressed: () => OmniOta.checkAndPrompt(context),
-          ),
-          IconButton(
             icon: const Icon(Icons.account_balance_wallet_outlined, color: _purple),
             tooltip: 'Wallet',
             onPressed: () => _showWalletModal(context),
+          ),
+          IconButton(
+            icon: const Icon(Icons.people_outline, color: _teal),
+            tooltip: 'Friends',
+            onPressed: () => _showFriendsModal(context),
           ),
           IconButton(
             icon: const Icon(Icons.info_outline, color: _teal),
@@ -745,8 +799,24 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
           Container(
             padding: const EdgeInsets.all(12),
             color: const Color(0xFF1E1E1E),
-            child: Row(
+            child: Column(
               children: [
+                if (_selectedImage != null)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(children: [
+                        const Icon(Icons.image, color: _teal, size: 16),
+                        const SizedBox(width: 6),
+                        Expanded(child: Text('${_selectedImage!.bytes.length ~/ 1024} KB image attached',
+                            style: const TextStyle(color: Colors.grey, fontSize: 12))),
+                        IconButton(icon: const Icon(Icons.close, size: 18), onPressed: () => setState(() => _selectedImage = null)),
+                      ]),
+                    ),
+                  ),
+                Row(
+                  children: [
                 Expanded(
                   child: TextField(
                     controller: _postController,
@@ -767,6 +837,11 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.image_outlined, color: _teal),
+                  tooltip: 'Attach image',
+                  onPressed: _isPublishing ? null : _pickPostImage,
+                ),
                 _isPublishing
                     ? const SizedBox(
                         width: 24,
@@ -778,6 +853,8 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                         tooltip: 'Sign & post',
                         onPressed: _publishLocalPost,
                       ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -871,6 +948,29 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
     );
   }
 
+  Widget _buildImagePreview(Map<dynamic, dynamic> payload) {
+    final sha = '${payload['image_sha256'] ?? ''}';
+    if (sha.isEmpty) return const SizedBox.shrink();
+    return FutureBuilder<Uint8List?>(
+      future: KickBackMedia.fetch(_hubSettings, sha),
+      builder: (context, snapshot) {
+        if (snapshot.data == null) {
+          return const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text('Image unavailable from the current hub.', style: TextStyle(color: Colors.grey, fontSize: 11)),
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.memory(snapshot.data!, fit: BoxFit.cover, width: double.infinity, height: 240),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildHubCard(HubFeedEvent e) {
     final key = e.displayAuthor;
     final mine = _identity != null && key == _identity!.pubkeyHex;
@@ -933,6 +1033,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
             ),
             const SizedBox(height: 10),
             Text(e.text, style: const TextStyle(fontSize: 14, color: Colors.white, height: 1.3)),
+            _buildImagePreview(e.appPayload),
             if (e.appPayload['imported_from'] is Map) ...[
               const SizedBox(height: 6),
               Text(
@@ -1092,6 +1193,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
             ),
             const SizedBox(height: 10),
             Text(text, style: const TextStyle(fontSize: 14, color: Colors.white, height: 1.3)),
+            _buildImagePreview(e.payload),
             if (e.payload['imported_from'] is Map) ...[
               const SizedBox(height: 6),
               Text(
@@ -1107,6 +1209,11 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                 Expanded(
                   child: Text(status.text, style: TextStyle(fontSize: 11, color: status.color)),
                 ),
+                if (!mine)
+                  TextButton(
+                    onPressed: () => _sendFriendEvent(e.displayAuthor, 'pending'),
+                    child: const Text('Add friend', style: TextStyle(fontSize: 11)),
+                  ),
                 IconButton(
                   icon: const Icon(Icons.share_outlined, size: 16, color: Colors.grey),
                   tooltip: 'Share to Mastodon',
@@ -1127,6 +1234,50 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _showFriendsModal(BuildContext context) {
+    final me = _identity?.pubkeyHex;
+    final entries = <String, String>{};
+    for (final e in _friendEvents) {
+      final target = '${e.payload['target_pubkey'] ?? ''}';
+      if (target.isEmpty) continue;
+      final other = e.authorPubkey == me ? target : e.authorPubkey;
+      entries[other] = '${e.payload['state'] ?? 'pending'}';
+    }
+    for (final e in _hubFriendEvents) {
+      final target = '${e.payload['target_pubkey'] ?? ''}';
+      final author = '${e.displayAuthor}';
+      if (target.isEmpty || author.isEmpty) continue;
+      final other = author == me ? target : author;
+      entries[other] = '${e.payload['state'] ?? 'pending'}';
+    }
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E1E1E),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Friends', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            const Text('Mutual adds are signed by both people and travel through the mesh.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+            const SizedBox(height: 12),
+            if (entries.isEmpty) const Text('No friend requests yet.', style: TextStyle(color: Colors.grey)),
+            ...entries.entries.map((entry) => ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const CircleAvatar(child: Icon(Icons.person)),
+              title: Text('${entry.key.substring(0, 8)}…'),
+              subtitle: Text(entry.value),
+              trailing: entry.value == 'pending' && entry.key != me
+                  ? TextButton(onPressed: () => _sendFriendEvent(entry.key, 'accepted'), child: const Text('Accept'))
+                  : null,
+            )),
+          ]),
         ),
       ),
     );
