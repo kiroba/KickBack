@@ -18,7 +18,6 @@ import 'omni_fit.dart';
 import 'kickback_platform.dart';
 import 'kickback_secure_identity.dart';
 import 'kickback_media.dart';
-import 'omni_node_wiring.dart';
 
 /// ============================================================================
 /// THE KICKBACK SOCIAL NETWORK UI
@@ -116,7 +115,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
   final TextEditingController _postController = TextEditingController();
   final LocalEventStore _store = LocalEventStore();
   OmniHubClient _hub = const OmniHubClient();
-  OmniNodeWiring? _wiring; // standard node wiring: probe + publish path route through it (K2)
+  OmniNodeWiring? _wiring; // the standard node wiring, from Omni-Core-UI (K3): probe, feed, sync and the publish path route through it
   HubSettings _hubSettings = const HubSettings();
   HubConnection? _hubConn; // null = not checked yet
   int _hubGen = 0; // bumped when the Hub setting changes; drops answers from the old hub
@@ -203,8 +202,8 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
     final gen = _hubGen;
     final first = _hubCursor == 0;
     final r = first
-        ? await _hub.eventsFeed(limit: 100, type: kPostAction)
-        : await _hub.eventsFeed(limit: 200, since: _hubCursor, type: kPostAction);
+        ? await _feedEvents(limit: 100, type: kPostAction)
+        : await _feedEvents(limit: 200, since: _hubCursor, type: kPostAction);
     if (gen != _hubGen) return; // Hub setting changed while this was in flight
     if (r.state == HubFeedState.ok) {
       await _hubFeed.addAll(r.events);
@@ -217,7 +216,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
       _feedState = r.state;
       _feedError = r.error;
     });
-    final friendFeed = await _hub.eventsFeed(limit: 200, type: kFriendAction);
+    final friendFeed = await _feedEvents(limit: 200, type: kFriendAction);
     if (friendFeed.state == HubFeedState.ok) _hubFriendEvents = friendFeed.events;
   }
 
@@ -232,7 +231,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
     _polling = true;
     final gen = _hubGen;
     try {
-      final conn = await _hub.connection();
+      final conn = await _probeConnection();
       if (gen != _hubGen) return;
       final status = conn.status;
       int? count;
@@ -242,7 +241,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
         final n = stats?['total_events'];
         count = n is int ? n : int.tryParse('${n ?? ''}');
         if (await _store.pendingCount() > 0) {
-          sync = await _store.syncToHubDetailed(_hub);
+          sync = await _syncToHub();
         }
       }
       if (!mounted || gen != _hubGen) return;
@@ -286,6 +285,13 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
   Future<HubSyncResult> _syncToHub() =>
       _wiring?.syncToNode() ?? _store.syncToHubDetailed(_hub);
 
+  Future<HubConnection> _probeConnection() =>
+      _wiring?.probeConnection() ?? _hub.connection();
+
+  Future<HubFeedResult> _feedEvents({int limit = 50, int? since, String? type}) =>
+      _wiring?.feed(limit: limit, since: since, type: type) ??
+      _hub.eventsFeed(limit: limit, since: since, type: type);
+
   Future<void> _publishLocalPost() async {
     final text = _postController.text.trim();
     if ((text.isEmpty && _selectedImage == null) || _isPublishing) return;
@@ -316,7 +322,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
 
       final sync = await _syncToHub();
       final conn = sync.hubReachable
-          ? await _hub.connection()
+          ? await _probeConnection()
           : const HubConnection(HubConnectionState.unreachable);
       if (!mounted) return;
       setState(() {
