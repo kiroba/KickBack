@@ -1,6 +1,7 @@
 /// ============================================================================
 /// OMNI NODE WIRING — the standard node-handoff layer (SoT §9).
-/// Canary: KickBack slice K1. Proven here, it lifts into Omni-Core-UI at K3
+/// Canary: KickBack (K1 landed the layer, K2 routes the publish path).
+/// Proven here, it lifts into Omni-Core-UI at K3
 /// (Kiro's ruling, Nov 20, 2026) so LPE and OmniCast inherit the same layer.
 ///
 /// What this is: one door out of the app, in two modes.
@@ -129,6 +130,17 @@ class OmniNodeWiring {
   Future<OmniEvent> appendLocal(
           String action, Map<String, dynamic> payload) =>
       store.append(action, payload);
+
+  /// The publish path (K2): sign into the local log, then hand what is
+  /// waiting to the node. The app's signature travels inside the event;
+  /// the node re-signs as itself and relays. Returns the stored event
+  /// and the sync outcome, in the order the app already used them.
+  Future<(OmniEvent, HubSyncResult)> publish(
+      String action, Map<String, dynamic> payload) async {
+    final event = await appendLocal(action, payload);
+    final sync = await syncToNode();
+    return (event, sync);
+  }
 
   /// Hands everything still waiting in the local log to the hub.
   Future<HubSyncResult> syncToNode() => store.syncToHubDetailed(hub);
