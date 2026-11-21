@@ -116,7 +116,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
   final TextEditingController _postController = TextEditingController();
   final LocalEventStore _store = LocalEventStore();
   OmniHubClient _hub = const OmniHubClient();
-  OmniNodeWiring? _wiring; // standard node wiring (K1: constructed + probed, routes nothing yet)
+  OmniNodeWiring? _wiring; // standard node wiring: probe + publish path route through it (K2)
   HubSettings _hubSettings = const HubSettings();
   HubConnection? _hubConn; // null = not checked yet
   int _hubGen = 0; // bumped when the Hub setting changes; drops answers from the old hub
@@ -277,6 +277,15 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
     }
   }
 
+  /// The publish path, routed through the node wiring when it is up
+  /// (K2). Before _init builds the wiring — or if it ever goes away —
+  /// these fall back to the exact calls the app always made.
+  Future<OmniEvent> _appendEvent(String action, Map<String, dynamic> payload) =>
+      _wiring?.appendLocal(action, payload) ?? _store.append(action, payload);
+
+  Future<HubSyncResult> _syncToHub() =>
+      _wiring?.syncToNode() ?? _store.syncToHubDetailed(_hub);
+
   Future<void> _publishLocalPost() async {
     final text = _postController.text.trim();
     if ((text.isEmpty && _selectedImage == null) || _isPublishing) return;
@@ -292,7 +301,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
     try {
       final image = _selectedImage;
       if (image != null) await KickBackMedia.upload(_hubSettings, image);
-      final ev = await _store.append(kPostAction, {
+      final ev = await _appendEvent(kPostAction, {
         'text': text,
         'app': 'kickback',
         if (image != null) ...{
@@ -305,7 +314,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
       if (mounted) setState(() => _selectedImage = null);
       await _loadFeed();
 
-      final sync = await _store.syncToHubDetailed(_hub);
+      final sync = await _syncToHub();
       final conn = sync.hubReachable
           ? await _hub.connection()
           : const HubConnection(HubConnectionState.unreachable);
@@ -348,14 +357,14 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
       return;
     }
     try {
-      await _store.append(kFriendAction, {
+      await _appendEvent(kFriendAction, {
         'schema': 1,
         'target_pubkey': target,
         'state': state,
         'app': 'kickback',
       });
       await _loadFeed();
-      await _store.syncToHubDetailed(_hub);
+      await _syncToHub();
       _snack(state == 'accepted' ? 'Friend request accepted.' : 'Friend request sent.', _teal);
     } catch (e) {
       _snack('Could not update friends: $e', _red);
@@ -373,9 +382,9 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
     if (!auth.ok) return auth.message ?? 'Import not signed: not unlocked';
     try {
       for (final p in payloads) {
-        await _store.append(kPostAction, p);
+        await _appendEvent(kPostAction, p);
       }
-      final sync = await _store.syncToHubDetailed(_hub);
+      final sync = await _syncToHub();
       if (mounted) {
         setState(() => _lastSync = sync);
         await _loadFeed();
