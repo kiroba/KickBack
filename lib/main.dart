@@ -18,6 +18,7 @@ import 'omni_fit.dart';
 import 'kickback_platform.dart';
 import 'kickback_secure_identity.dart';
 import 'kickback_media.dart';
+import 'omni_node_wiring.dart';
 
 /// ============================================================================
 /// THE KICKBACK SOCIAL NETWORK UI
@@ -115,6 +116,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
   final TextEditingController _postController = TextEditingController();
   final LocalEventStore _store = LocalEventStore();
   OmniHubClient _hub = const OmniHubClient();
+  OmniNodeWiring? _wiring; // standard node wiring (K1: constructed + probed, routes nothing yet)
   HubSettings _hubSettings = const HubSettings();
   HubConnection? _hubConn; // null = not checked yet
   int _hubGen = 0; // bumped when the Hub setting changes; drops answers from the old hub
@@ -166,6 +168,8 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
       _hubSettings = await HubSettingsStore.load();
       _hub = _hubSettings.client();
       _identity = await StargateIdentity.load();
+      _wiring = OmniNodeWiring(appContext: 'kickback', store: _store, hub: _hub);
+      await _wiring!.initializeNode();
       await _loadFeed();
     } catch (e) {
       if (mounted) setState(() => _loadError = '$e');
@@ -469,6 +473,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
       _hubGen++;
       _hubSettings = next;
       _hub = next.client();
+      _wiring?.hub = _hub;
       _hubConn = null;
       _hubStatus = null;
       _daemonEventCount = null;
