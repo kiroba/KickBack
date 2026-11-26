@@ -12,6 +12,8 @@ import 'kickback_hub_settings.dart';
 import 'identity_transfer.dart';
 import 'mastodon_import.dart';
 import 'mastodon_link_store.dart';
+import 'bluesky_import.dart';
+import 'bluesky_link_store.dart';
 import 'omni_bug_report.dart';
 import 'omni_consent_gate.dart';
 import 'omni_fit.dart';
@@ -673,6 +675,12 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                   onImport: _importExternalPosts,
                 ),
                 const Divider(height: 28, color: Colors.white12),
+                _BlueskyImportSection(
+                  verifyCode: _identity == null ? null : blueskyVerifyCode(_identity!.pubkeyHex),
+                  existingPayloads: _existingPostPayloads,
+                  onImport: _importExternalPosts,
+                ),
+                const Divider(height: 28, color: Colors.white12),
                 Row(children: [
                   Expanded(
                     child: Text(
@@ -1160,7 +1168,11 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
     final account = '${src['account'] ?? ''}';
     final when = DateTime.tryParse('${src['posted_at'] ?? ''}')?.toLocal();
     return [
-      platform == 'mastodon' ? 'via Mastodon' : 'via $platform',
+      platform == 'mastodon'
+          ? 'via Mastodon'
+          : platform == 'bluesky'
+              ? 'via Bluesky'
+              : 'via $platform',
       if (account.isNotEmpty) account,
       if (when != null) _formatTime(when),
     ].join(' · ');
@@ -1661,6 +1673,247 @@ class _MastodonImportSectionState extends State<_MastodonImportSection> {
         ] else ...[
           Text(
             'Linked: ${_link!.acct.full}',
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              OutlinedButton(
+                onPressed: _busy ? null : _import,
+                child: Text(_busy ? 'Working…' : 'Import recent posts'),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: _busy ? null : _unlink,
+                child: const Text('Unlink'),
+              ),
+            ],
+          ),
+        ],
+        if (_msg != null) ...[
+          const SizedBox(height: 8),
+          Text(_msg!,
+              style: TextStyle(
+                  color: _msgOk ? Colors.greenAccent : _red, fontSize: 12)),
+        ],
+      ],
+    );
+  }
+}
+
+class _BlueskyImportSection extends StatefulWidget {
+  /// This identity's public verify code, or null while the identity loads.
+  final String? verifyCode;
+
+  /// Payloads of the posts already in the local log, for dedupe.
+  final Future<List<Map<String, dynamic>>> Function() existingPayloads;
+
+  /// Signs, stores and syncs the imported payloads; returns an error
+  /// string, or null on success.
+  final Future<String?> Function(List<Map<String, dynamic>> payloads)
+      onImport;
+
+  const _BlueskyImportSection({
+    required this.verifyCode,
+    required this.existingPayloads,
+    required this.onImport,
+  });
+
+  @override
+  State<_BlueskyImportSection> createState() => _BlueskyImportSectionState();
+}
+
+class _BlueskyImportSectionState extends State<_BlueskyImportSection> {
+  static const Color _red = Color(0xFFFF5370);
+
+  final TextEditingController _handle = TextEditingController();
+  final BlueskyClient _client = BlueskyClient();
+  BlueskyLink? _link;
+  bool _loading = true;
+  bool _busy = false;
+  String? _msg;
+  bool _msgOk = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _handle.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final link = await BlueskyLinkStore.load();
+    if (!mounted) return;
+    setState(() {
+      _link = link;
+      if (link != null) _handle.text = link.handle.handle;
+      _loading = false;
+    });
+  }
+
+  void _say(String msg, bool ok) {
+    if (!mounted) return;
+    setState(() {
+      _msg = msg;
+      _msgOk = ok;
+    });
+  }
+
+  Future<void> _verify() async {
+    final code = widget.verifyCode;
+    if (code == null) {
+      _say('Your key on this app loads at startup - reopen Settings once it has.', false);
+      return;
+    }
+    final handle = parseBlueskyHandle(_handle.text);
+    if (handle == null) {
+      _say('That does not look like a Bluesky handle - use you.bsky.social (or your own domain).', false);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final did = await _client.resolveHandle(handle);
+      final profile = await _client.lookupProfile(handle);
+      if (!blueskyProfileClaimsCode(profile, code)) {
+        _say('The code is not in that account\'s bio yet. Add it on Bluesky, save, then verify again.', false);
+        return;
+      }
+      final link = BlueskyLink(handle, did);
+      await BlueskyLinkStore.save(link);
+      if (mounted) setState(() => _link = link);
+      _say('Linked ${handle.full}. Its public posts can now be imported.', true);
+    } on BlueskyImportException catch (e) {
+      _say(e.message, false);
+    } catch (_) {
+      _say('Something went wrong checking that account. Try again.', false);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _import() async {
+    final link = _link;
+    if (link == null) return;
+    setState(() => _busy = true);
+    try {
+      final posts =
+          await _client.recentPosts(link.did, link.handle.handle);
+      final already =
+          importedBlueskyPostUris(await widget.existingPayloads());
+      // The API answers newest first; appending oldest first keeps the
+      // imported run in its original order in the log and the feed.
+      final fresh = posts
+          .where((p) => !already.contains(p.uri))
+          .toList()
+          .reversed
+          .toList();
+      if (fresh.isEmpty) {
+        _say('Nothing new: the recent public posts from ${link.handle.full} are already in KickBack.', true);
+        return;
+      }
+      final payloads =
+          fresh.map((p) => blueskyImportPayload(p, link.handle)).toList();
+      final err = await widget.onImport(payloads);
+      if (err != null) {
+        _say(err, false);
+        return;
+      }
+      _say('Imported ${payloads.length} post${payloads.length == 1 ? '' : 's'} from ${link.handle.full} - signed by your key here and marked as Bluesky imports.', true);
+    } on BlueskyImportException catch (e) {
+      _say(e.message, false);
+    } catch (_) {
+      _say('Something went wrong during the import. Try again.', false);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _unlink() async {
+    await BlueskyLinkStore.clear();
+    if (!mounted) return;
+    setState(() {
+      _link = null;
+      _msg = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    InputDecoration deco(String label, {String? hint}) => InputDecoration(
+          labelText: label,
+          hintText: hint,
+          filled: true,
+          fillColor: const Color(0xFF2C2C2C),
+          border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none),
+        );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Bluesky',
+            style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.white)),
+        const SizedBox(height: 4),
+        const Text(
+          'Bring your public Bluesky posts into KickBack. They land in your log signed by your key here, marked with where they came from. Only posts - no reposts, no replies.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        if (_loading)
+          const Text('Loading…',
+              style: TextStyle(color: Colors.grey, fontSize: 12))
+        else if (_link == null) ...[
+          TextField(
+            controller: _handle,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: deco('Bluesky handle', hint: 'you.bsky.social'),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Prove it is yours: put this code in your Bluesky bio (Edit profile > Bio), save, then tap Verify. The code is public - it links the accounts, it is not a password.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: SelectableText(
+                  widget.verifyCode ?? '…',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontFamily: 'monospace'),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.copy, size: 18),
+                onPressed: widget.verifyCode == null
+                    ? null
+                    : () => Clipboard.setData(
+                        ClipboardData(text: widget.verifyCode!)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton(
+              onPressed: _busy ? null : _verify,
+              child: Text(_busy ? 'Checking…' : 'Verify and link'),
+            ),
+          ),
+        ] else ...[
+          Text(
+            'Linked: ${_link!.handle.full}',
             style: const TextStyle(color: Colors.white, fontSize: 13),
           ),
           const SizedBox(height: 10),
