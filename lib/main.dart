@@ -14,6 +14,8 @@ import 'mastodon_import.dart';
 import 'mastodon_link_store.dart';
 import 'bluesky_import.dart';
 import 'bluesky_link_store.dart';
+import 'peertube_import.dart';
+import 'peertube_link_store.dart';
 import 'omni_bug_report.dart';
 import 'omni_consent_gate.dart';
 import 'omni_fit.dart';
@@ -681,6 +683,12 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                   onImport: _importExternalPosts,
                 ),
                 const Divider(height: 28, color: Colors.white12),
+                _PeerTubeImportSection(
+                  verifyCode: _identity == null ? null : peertubeVerifyCode(_identity!.pubkeyHex),
+                  existingPayloads: _existingPostPayloads,
+                  onImport: _importExternalPosts,
+                ),
+                const Divider(height: 28, color: Colors.white12),
                 Row(children: [
                   Expanded(
                     child: Text(
@@ -1172,7 +1180,9 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
           ? 'via Mastodon'
           : platform == 'bluesky'
               ? 'via Bluesky'
-              : 'via $platform',
+              : platform == 'peertube'
+                  ? 'via PeerTube'
+                  : 'via $platform',
       if (account.isNotEmpty) account,
       if (when != null) _formatTime(when),
     ].join(' · ');
@@ -1922,6 +1932,250 @@ class _BlueskyImportSectionState extends State<_BlueskyImportSection> {
               OutlinedButton(
                 onPressed: _busy ? null : _import,
                 child: Text(_busy ? 'Working…' : 'Import recent posts'),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: _busy ? null : _unlink,
+                child: const Text('Unlink'),
+              ),
+            ],
+          ),
+        ],
+        if (_msg != null) ...[
+          const SizedBox(height: 8),
+          Text(_msg!,
+              style: TextStyle(
+                  color: _msgOk ? Colors.greenAccent : _red, fontSize: 12)),
+        ],
+      ],
+    );
+  }
+}
+
+class _PeerTubeImportSection extends StatefulWidget {
+  /// This identity's public verify code, or null while the identity loads.
+  final String? verifyCode;
+
+  /// Payloads of the posts already in the local log, for dedupe.
+  final Future<List<Map<String, dynamic>>> Function() existingPayloads;
+
+  /// Signs, stores and syncs the imported payloads; returns an error
+  /// string, or null on success.
+  final Future<String?> Function(List<Map<String, dynamic>> payloads)
+      onImport;
+
+  const _PeerTubeImportSection({
+    required this.verifyCode,
+    required this.existingPayloads,
+    required this.onImport,
+  });
+
+  @override
+  State<_PeerTubeImportSection> createState() => _PeerTubeImportSectionState();
+}
+
+class _PeerTubeImportSectionState extends State<_PeerTubeImportSection> {
+  static const Color _red = Color(0xFFFF5370);
+
+  final TextEditingController _account = TextEditingController();
+  final PeerTubeClient _client = PeerTubeClient();
+  PeerTubeLink? _link;
+  bool _loading = true;
+  bool _busy = false;
+  String? _msg;
+  bool _msgOk = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _account.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final link = await PeerTubeLinkStore.load();
+    if (!mounted) return;
+    setState(() {
+      _link = link;
+      if (link != null) _account.text = link.account.full;
+      _loading = false;
+    });
+  }
+
+  void _say(String msg, bool ok) {
+    if (!mounted) return;
+    setState(() {
+      _msg = msg;
+      _msgOk = ok;
+    });
+  }
+
+  Future<void> _verify() async {
+    final code = widget.verifyCode;
+    if (code == null) {
+      _say('Your key on this app loads at startup - reopen Settings once it has.', false);
+      return;
+    }
+    final acct = parsePeerTubeAccount(_account.text);
+    if (acct == null) {
+      _say('That does not look like a PeerTube account - use you@instance (your account address, with the instance that hosts it).', false);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final account = await _client.lookupAccount(acct);
+      var claimed = peertubeAccountClaimsCode(account, const [], code);
+      if (!claimed) {
+        final channels = await _client.listChannels(acct);
+        claimed = peertubeAccountClaimsCode(account, channels, code);
+      }
+      if (!claimed) {
+        _say('The code is not in that account\'s or its channels\' descriptions yet. Add it on PeerTube, save, then verify again.', false);
+        return;
+      }
+      final link = PeerTubeLink(acct);
+      await PeerTubeLinkStore.save(link);
+      if (mounted) setState(() => _link = link);
+      _say('Linked ${acct.full}. Its public videos can now be imported.', true);
+    } on PeerTubeImportException catch (e) {
+      _say(e.message, false);
+    } catch (_) {
+      _say('Something went wrong checking that account. Try again.', false);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _import() async {
+    final link = _link;
+    if (link == null) return;
+    setState(() => _busy = true);
+    try {
+      final videos = await _client.recentVideos(link.account);
+      final already =
+          importedPeerTubeVideoUuids(await widget.existingPayloads());
+      // The API answers newest first; appending oldest first keeps the
+      // imported run in its original order in the log and the feed.
+      final fresh = videos
+          .where((v) => !already.contains(v.uuid))
+          .toList()
+          .reversed
+          .toList();
+      if (fresh.isEmpty) {
+        _say('Nothing new: the recent public videos from ${link.account.full} are already in KickBack.', true);
+        return;
+      }
+      final payloads =
+          fresh.map((v) => peertubeImportPayload(v, link.account)).toList();
+      final err = await widget.onImport(payloads);
+      if (err != null) {
+        _say(err, false);
+        return;
+      }
+      _say('Imported ${payloads.length} video${payloads.length == 1 ? '' : 's'} from ${link.account.full} - signed by your key here and marked as PeerTube imports.', true);
+    } on PeerTubeImportException catch (e) {
+      _say(e.message, false);
+    } catch (_) {
+      _say('Something went wrong during the import. Try again.', false);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _unlink() async {
+    await PeerTubeLinkStore.clear();
+    if (!mounted) return;
+    setState(() {
+      _link = null;
+      _msg = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    InputDecoration deco(String label, {String? hint}) => InputDecoration(
+          labelText: label,
+          hintText: hint,
+          filled: true,
+          fillColor: const Color(0xFF2C2C2C),
+          border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none),
+        );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('PeerTube',
+            style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.white)),
+        const SizedBox(height: 4),
+        const Text(
+          'Bring your public PeerTube videos into KickBack. They land in your log signed by your key here, marked with where they came from. Only public videos from your account.',
+          style: TextStyle(color: Colors.grey, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        if (_loading)
+          const Text('Loading…',
+              style: TextStyle(color: Colors.grey, fontSize: 12))
+        else if (_link == null) ...[
+          TextField(
+            controller: _account,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: deco('PeerTube account', hint: 'you@instance'),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Prove it is yours: put this code in your PeerTube account or channel description (Edit profile > About, or your channel > Description), save, then tap Verify. The code is public - it links the accounts, it is not a password.',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: SelectableText(
+                  widget.verifyCode ?? '…',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontFamily: 'monospace'),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.copy, size: 18),
+                onPressed: widget.verifyCode == null
+                    ? null
+                    : () => Clipboard.setData(
+                        ClipboardData(text: widget.verifyCode!)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton(
+              onPressed: _busy ? null : _verify,
+              child: Text(_busy ? 'Checking…' : 'Verify and link'),
+            ),
+          ),
+        ] else ...[
+          Text(
+            'Linked: ${_link!.account.full}',
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              OutlinedButton(
+                onPressed: _busy ? null : _import,
+                child: Text(_busy ? 'Working…' : 'Import recent videos'),
               ),
               const SizedBox(width: 8),
               TextButton(
