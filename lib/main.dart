@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -753,7 +752,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                           }
                           next = HubSettings(
                             mode: HubMode.remote,
-                            host: parsed.host,
+                            host: parsed.host!,
                             ipcPort: ipcPort,
                             telemetryPort: telPort,
                             token: tok,
@@ -1446,7 +1445,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                   color: AppLock.unprotected ? _amber : _teal),
               row('Hub setting', _hubSettings.label),
               row(_hub.isRemote ? 'Remote hub' : 'Local daemon', daemon, color: s?.online == true ? _teal : _amber),
-              if (s?.nodeId != null) row('Daemon node', s.nodeId),
+              if (s?.nodeId != null) row('Daemon node', s!.nodeId!),
               if (_daemonEventCount != null) row('Daemon log', '$_daemonEventCount events'),
               row(
                 'Shared feed',
