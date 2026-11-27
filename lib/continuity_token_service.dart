@@ -299,7 +299,7 @@ class ContinuityTokenService {
         final jsonRes = jsonDecode(response.body);
         return jsonRes['result'];
       }
-    } catch (_) {
+    } catch (e) {
       // Fallback or offline handling
     }
     return null;
