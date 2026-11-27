@@ -559,23 +559,30 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
                 const SizedBox(height: 4),
                 const Text('Which Omni daemon this app uses for the shared feed and for sending posts.',
                     style: TextStyle(color: Colors.grey, fontSize: 12)),
-                RadioListTile<HubMode>(
-                  value: HubMode.local,
+                RadioGroup<HubMode>(
                   groupValue: mode,
-                  onChanged: (v) => setSheet(() => mode = v ?? HubMode.local),
-                  title: Text(kickbackIsDesktop ? 'This PC' : 'This phone'),
-                  subtitle: Text(kickbackIsDesktop
-                      ? 'Daemon runs on this PC (127.0.0.1)'
-                      : 'Daemon runs in Termux here (127.0.0.1)'),
-                  contentPadding: EdgeInsets.zero,
-                ),
-                RadioListTile<HubMode>(
-                  value: HubMode.remote,
-                  groupValue: mode,
-                  onChanged: (v) => setSheet(() => mode = v ?? HubMode.remote),
-                  title: const Text('Remote hub'),
-                  subtitle: const Text('Another device runs the daemon (e.g. your PC at home)'),
-                  contentPadding: EdgeInsets.zero,
+                  onChanged: (v) {
+                    if (v != null) setSheet(() => mode = v);
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      RadioListTile<HubMode>(
+                        value: HubMode.local,
+                        title: Text(kickbackIsDesktop ? 'This PC' : 'This phone'),
+                        subtitle: Text(kickbackIsDesktop
+                            ? 'Daemon runs on this PC (127.0.0.1)'
+                            : 'Daemon runs in Termux here (127.0.0.1)'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                      RadioListTile<HubMode>(
+                        value: HubMode.remote,
+                        title: const Text('Remote hub'),
+                        subtitle: const Text('Another device runs the daemon (e.g. your PC at home)'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ],
+                  ),
                 ),
                 if (mode == HubMode.remote) ...[
                   const SizedBox(height: 8),
@@ -1129,7 +1136,7 @@ class _KickBackMainScreenState extends State<KickBackMainScreen> {
               decoration: BoxDecoration(
                 color: const Color(0xFF1E1E1E),
                 shape: BoxShape.circle,
-                border: Border.all(color: _teal.withOpacity(0.4), width: 2),
+                border: Border.all(color: _teal.withValues(alpha: 0.4), width: 2),
               ),
               child: const Icon(Icons.edit_note, size: 48, color: _teal),
             ),

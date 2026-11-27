@@ -110,7 +110,7 @@ class KickbackStorefrontScreen extends StatelessWidget {
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         leading: CircleAvatar(
-          backgroundColor: accentColor.withOpacity(0.2),
+          backgroundColor: accentColor.withValues(alpha: 0.2),
           child: Icon(icon, color: accentColor),
         ),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
